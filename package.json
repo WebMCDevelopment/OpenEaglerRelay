@@ -1,11 +1,12 @@
 {
   "name": "eaglerrelayjs",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Eaglercraft relay server implementation in typescript",
   "repository": "github:WebMCDevelopment/EaglerRelayJS",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
+    "start": "tsx src/index.ts",
     "build": "tsc && tsc-esm-fix dist",
     "lint": "eslint . --ext .ts",
     "lint:fix": "eslint . --ext .ts --fix"

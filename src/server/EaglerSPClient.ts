@@ -14,11 +14,12 @@ export class EaglerSPClient {
   private static readonly CLIENT_CODE_LENGTH = 16;
   private static readonly CLIENT_CODE_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-  public SOCKET: WebSocket;
-  public SERVER: EaglerSPServer;
-  public ID: string;
-  public ADDRESS: string;
-  public CREATED: number;
+  public readonly SOCKET: WebSocket;
+  public readonly SERVER: EaglerSPServer;
+  public readonly ID: string;
+  public readonly ADDRESS: string;
+  public readonly CREATED: number;
+
   public STATE: LoginState;
   public SERVER_NOTIFIED_OF_CLOSE: boolean;
 

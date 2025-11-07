@@ -2,8 +2,6 @@ import chalk from 'chalk';
 import { RelayConfig } from './RelayConfig';
 
 export class RelayLogger {
-  private constructor () {}
-
   private static format (msg: any, ...args: any[]): string {
     let ret = msg;
     for (const arg of args) ret = ret.replace('{}', typeof arg === 'object' ? JSON.stringify(arg) : String(arg));

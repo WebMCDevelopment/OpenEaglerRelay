@@ -3,16 +3,18 @@ import { RelayConfig } from '../utils/RelayConfig';
 import { IncomingMessage } from 'http';
 import { Socket } from 'net';
 import { RelayLogger } from '../utils/RelayLogger';
-import { RelayPacket } from '../pkt/RelayPacket';
-import { RelayPacket00Handshake } from '../pkt/RelayPacket00Handshake';
-import { RelayPacketFFErrorCode } from '../pkt/RelayPacketFFErrorCode';
 import { EaglerSPClient } from './EaglerSPClient';
 import { EaglerSPServer } from './EaglerSPServer';
+import { RelayPacket } from '../pkt/RelayPacket';
 import { RelayPacket01ICEServers } from '../pkt/RelayPacket01ICEServers';
-import { RelayPacket69Pong } from '../pkt/RelayPacket69Pong';
-import { RelayVersion } from '../utils/RelayVersion';
+import { RelayPacket00Handshake } from '../pkt/RelayPacket00Handshake';
 import { LocalWorld, RelayPacket07LocalWorlds } from '../pkt/RelayPacket07LocalWorlds';
+import { RelayPacket69Pong } from '../pkt/RelayPacket69Pong';
+import { RelayPacketFEDisconnectClient } from '../pkt/RelayPacketFEDisconnectClient';
+import { RelayPacketFFErrorCode } from '../pkt/RelayPacketFFErrorCode';
+import { RelayVersion } from '../utils/RelayVersion';
 import { SocketAddress } from '../utils/SocketAddress';
+import { RateLimit, RateLimiter } from './RateLimiter';
 import '../pkt/RegisterPackets';
 
 export class EaglerSPRelay {
@@ -24,6 +26,9 @@ export class EaglerSPRelay {
   private readonly SERVER_CONNECTIONS: Map<WebSocket, EaglerSPServer>;
   private readonly SERVER_ADDRESS_SETS: Map<string, EaglerSPServer[]>;
 
+  private readonly WORLD_RATE_LIMITER: RateLimiter | undefined;
+  private readonly PING_RATE_LIMITER: RateLimiter | undefined;
+
   public constructor ();
   public constructor (config: object);
   public constructor (config?: object) {
@@ -31,6 +36,12 @@ export class EaglerSPRelay {
     if (config !== undefined) RelayConfig.loadConfigJSON(config);
     else RelayConfig.loadConfigFile('config.json');
     RelayLogger.debug('Debug logging enabled');
+    if (RelayConfig.get('limits.world_ratelimit.enabled')) this.WORLD_RATE_LIMITER = new RateLimiter(Number(RelayConfig.get('limits.world_ratelimit.period')) * 1000, Number(RelayConfig.get('limits.world_ratelimit.limit')), Number(RelayConfig.get('limits.world_ratelimit.lockout_limit')), Number(RelayConfig.get('limits.world_ratelimit.lockout_time')) * 1000);
+    if (RelayConfig.get('limits.ping_ratelimit.enabled')) this.PING_RATE_LIMITER = new RateLimiter(Number(RelayConfig.get('limits.ping_ratelimit.period')) * 1000, Number(RelayConfig.get('limits.ping_ratelimit.limit')), Number(RelayConfig.get('limits.ping_ratelimit.lockout_limit')), Number(RelayConfig.get('limits.ping_ratelimit.lockout_time')) * 1000);
+    setInterval(() => {
+      this.WORLD_RATE_LIMITER?.update();
+      this.PING_RATE_LIMITER?.update();
+    }, 30000);
     this.CLIENT_IDS = new Map();
     this.SERVER_CODES = new Map();
     this.PENDING_CONNECTIONS = new Map();
@@ -65,6 +76,14 @@ export class EaglerSPRelay {
                 let id: string | undefined;
                 let srv: EaglerSPServer | undefined;
                 if (ipkt.CONNECTION_TYPE === 1) {
+                  if (!this.rateLimit(this.WORLD_RATE_LIMITER, ws, waiting.ADDRESS)) return;
+                  let arr: EaglerSPServer[] | undefined = this.SERVER_ADDRESS_SETS.get(waiting.ADDRESS);
+                  if (arr !== undefined && arr.length >= Number(RelayConfig.get('limits.worlds_per_ip'))) {
+                    RelayLogger.debug('[{}]: Too many worlds are open on this address', waiting.ADDRESS);
+                    ws.send(RelayPacketFEDisconnectClient.RATELIMIT_PACKET_TOO_MANY);
+                    ws.close();
+                    return;
+                  }
                   RelayLogger.debug('[{}]: Connected as a server', waiting.ADDRESS);
                   let i: number = 0;
                   while (true) {
@@ -91,7 +110,7 @@ export class EaglerSPRelay {
                   RelayLogger.debug('[{}] [Relay -> Server]: PKT 0x00: Assign join code: {}', waiting.ADDRESS, id);
                   this.SERVER_CONNECTIONS.set(ws, srv);
                   this.PENDING_CONNECTIONS.delete(ws);
-                  let arr: EaglerSPServer[] | undefined = this.SERVER_ADDRESS_SETS.get(srv.SERVER_ADDRESS);
+                  arr = this.SERVER_ADDRESS_SETS.get(srv.SERVER_ADDRESS);
                   if (arr == undefined) {
                     arr = [];
                     this.SERVER_ADDRESS_SETS.set(srv.SERVER_ADDRESS, arr);
@@ -100,6 +119,7 @@ export class EaglerSPRelay {
                   (srv).send(new RelayPacket01ICEServers(RelayConfig.getRelayServers()));
                   RelayLogger.debug('[{}] [Relay -> Server]: PKT 0x01: Send ICE server list to server', waiting.ADDRESS);
                 } else if (ipkt.CONNECTION_TYPE === 2) {
+                  if (!this.rateLimit(this.PING_RATE_LIMITER, ws, waiting.ADDRESS)) return;
                   const codeLen: number = (RelayConfig.get('join_codes.length') as number);
                   let code: string = ipkt.CONNECTION_CODE;
                   RelayLogger.debug('[{}]: Connected as a client, requested server code: {}', waiting.ADDRESS, code);
@@ -129,10 +149,12 @@ export class EaglerSPRelay {
                     RelayLogger.debug('[{}] [Relay -> Client]: PKT 0x01: Send ICE server list to client', waiting.ADDRESS);
                   }
                 } else if (ipkt.CONNECTION_TYPE === 3) {
+                  if (!this.rateLimit(this.PING_RATE_LIMITER, ws, waiting.ADDRESS)) return;
                   RelayLogger.debug('[{}]: Pinging the server', waiting.ADDRESS);
                   ws.send(RelayPacket.writePacket(new RelayPacket69Pong(1, RelayConfig.get('server.comment') as string, RelayVersion.BRAND)));
                   ws.close();
                 } else if (ipkt.CONNECTION_TYPE === 4) {
+                  if (!this.rateLimit(this.PING_RATE_LIMITER, ws, waiting.ADDRESS)) return;
                   RelayLogger.debug('[{}]: Polling the server for other worlds', waiting.ADDRESS);
                   if (RelayConfig.get('server.show_local_worlds')) ws.send(RelayPacket.writePacket(new RelayPacket07LocalWorlds(this.getLocalWorlds(SocketAddress.getAddress(ws)))));
                   else ws.send(RelayPacket.writePacket(new RelayPacket07LocalWorlds([])));
@@ -219,6 +241,19 @@ export class EaglerSPRelay {
     const srvs: EaglerSPServer[] | undefined = this.SERVER_ADDRESS_SETS.get(addr);
     if (srvs != undefined && srvs.length > 0) for (const s of srvs) if (!s.SERVER_HIDDEN) arr.push(new LocalWorld(s.SERVER_NAME, s.CODE));
     return arr;
+  }
+
+  private rateLimit (l: RateLimiter | undefined, ws: WebSocket, addr: string): boolean {
+    if (l === undefined) return true;
+    const r = l.limit(addr);
+    if (r === RateLimit.NONE) return true;
+    if (r === RateLimit.LIMIT) {
+      ws.send(RelayPacketFEDisconnectClient.RATELIMIT_PACKET_BLOCK);
+    } else if (r === RateLimit.LIMIT_NOW_LOCKOUT) {
+      ws.send(RelayPacketFEDisconnectClient.RATELIMIT_PACKET_BLOCK_LOCK);
+    }
+    ws.close();
+    return false;
   }
 }
 

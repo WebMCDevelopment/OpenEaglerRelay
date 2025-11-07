@@ -13,12 +13,12 @@ import { RelayPacketFFErrorCode } from '../pkt/RelayPacketFFErrorCode';
 import { SocketAddress } from '../utils/SocketAddress';
 
 export class EaglerSPServer {
-  public SOCKET: WebSocket;
-  public CODE: string;
-  public CLIENTS: Map<string, EaglerSPClient>;
-  public SERVER_NAME: string;
-  public SERVER_ADDRESS: string;
-  public SERVER_HIDDEN: boolean;
+  public readonly SOCKET: WebSocket;
+  public readonly CODE: string;
+  public readonly CLIENTS: Map<string, EaglerSPClient>;
+  public readonly SERVER_NAME: string;
+  public readonly SERVER_ADDRESS: string;
+  public readonly SERVER_HIDDEN: boolean;
 
   public constructor (socket: WebSocket, code: string, serverName: string, serverAddress: string) {
     this.SOCKET = socket;

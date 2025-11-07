@@ -44,7 +44,24 @@ const CONFIG_DEFAULT = {
       type: 'stun',
       address: 'stun4.l.google.com:19302'
     }
-  ]
+  ],
+  limits: {
+    worlds_per_ip: 32,
+    world_ratelimit: {
+      enabled: true,
+      period: 192,
+      limit: 32,
+      lockout_limit: 48,
+      lockout_time: 600
+    },
+    ping_ratelimit: {
+      enabled: true,
+      period: 256,
+      limit: 128,
+      lockout_limit: 192,
+      lockout_time: 300
+    }
+  }
 };
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json; };
